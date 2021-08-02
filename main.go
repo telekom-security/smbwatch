@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/hirochachacha/go-smb2"
 )
 
 var MaxDepth int
+var timeout = time.Second * 10
 
 type ShareFile struct {
 	ShareName string
@@ -22,7 +24,8 @@ type ShareFile struct {
 }
 
 func smbSession(server, user, password string) (net.Conn, *smb2.Session, error) {
-	conn, err := net.Dial("tcp", fmt.Sprintf("%v:445", server))
+	dialer := net.Dialer{Timeout: timeout}
+	conn, err := dialer.Dial("tcp", fmt.Sprintf("%v:445", server))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -60,7 +63,7 @@ func smbGetShareFiles(smbShare *smb2.Share, folder string) ([]ShareFile, error) 
 			path := filepath.Join(folder, file.Name())
 			path = strings.ReplaceAll(path, "/", `\`)
 
-			log.Println(path)
+			log.Printf("found folder: %v", path)
 
 			subfolderFiles, err := smbGetShareFiles(smbShare, path)
 			if err != nil {
@@ -88,7 +91,7 @@ func smbGetFiles(s *smb2.Session) ([]ShareFile, error) {
 	}
 
 	for _, name := range names {
-		log.Printf("enumerating share %v", name)
+		log.Printf("indexing share %v", name)
 
 		fs, err := s.Mount(name)
 		if err != nil {
@@ -114,16 +117,25 @@ func smbGetFiles(s *smb2.Session) ([]ShareFile, error) {
 }
 
 func main() {
+	var worker int
+
 	server := flag.String("server", "", "smb server")
 	user := flag.String("user", "", "NTLM user")
 	pass := flag.String("pass", "", "NTLM pass")
 	dbname := flag.String("dbname", "sqlite.db", "sqlite filename")
+
+	// ldap specific options
+	ldapServer := flag.String("ldapServer", "", "ldap server to get smb server list")
+	ldapDn := flag.String("ldapDn", "", "ldap distinguished name")
+	ldapFilter := flag.String("ldapFilter", "(OperatingSystem=*server*)", "ldap filter to search for shares")
+
 	flag.IntVar(&MaxDepth, "maxdepth", 3, "max recursion depth when retrieving files")
+	flag.IntVar(&worker, "worker", 8, "amount of parallel worker")
 
 	flag.Parse()
 
-	if *server == "" || *user == "" || *pass == "" {
-		fmt.Fprintf(os.Stderr, "please specify a server, user and password")
+	if *user == "" || *pass == "" {
+		fmt.Fprintf(os.Stderr, "please specify a user and password")
 		os.Exit(1)
 	}
 
@@ -134,24 +146,72 @@ func main() {
 		log.Fatalf("unable to create db: %v", err)
 	}
 
-	conn, s, err := smbSession(*server, *user, *pass)
+	var serverlist []string
+
+	if *server != "" {
+		serverlist = append(serverlist, *server)
+	}
+
+	if *ldapServer != "" {
+		if *ldapDn == "" {
+			log.Fatalf("please specify a -ldapDn")
+		}
+
+		splitted := strings.SplitN(*ldapDn, "DC", 2)
+		if len(splitted) <= 1 {
+			log.Fatalf("invalid DN, could not extract baseDn")
+		}
+
+		baseDn := fmt.Sprintf("DC%v", splitted[1])
+
+		log.Printf("ldapServer=%v, ldapDn='%v', ldapBaseDn=%v, ldapFilter=%v", *ldapServer, *ldapDn, baseDn, *ldapFilter)
+
+		servers, err := getLdapServers(*ldapServer, *ldapDn, *pass, baseDn, *ldapFilter)
+		if err != nil {
+			log.Fatalf("failed getting servers via ldaps: %v", err)
+		}
+
+		log.Printf("retrieved %v servers from ldaps", len(servers))
+
+		serverlist = append(serverlist, servers...)
+	}
+
+	for _, s := range serverlist {
+		log.Printf("enumerating %v", s)
+
+		files, err := enumerateServer(s, *user, *pass)
+		if err != nil {
+			log.Printf("unable to enumerate %v: %v", s, err)
+			continue
+		}
+
+		log.Printf("retrieved %v files", len(files))
+
+		for _, file := range files {
+			if err = addFile(db, *server, file); err != nil {
+				log.Printf("unable to add file: %v", err)
+			}
+		}
+
+	}
+}
+
+func enumerateServer(server, user, pass string) ([]ShareFile, error) {
+	var sharefiles []ShareFile
+	var err error
+
+	conn, s, err := smbSession(server, user, pass)
 	if err != nil {
-		log.Fatalf("unable to connect to %v: %v", *server, err)
+		return sharefiles, fmt.Errorf("unable to connect to %v: %v", server, err)
 	}
 
 	defer conn.Close()
 	defer s.Logoff()
 
-	files, err := smbGetFiles(s)
+	sharefiles, err = smbGetFiles(s)
 	if err != nil {
-		log.Fatalf("unable to retrieve files: %v", err)
+		return sharefiles, err
 	}
 
-	log.Printf("retrieved %v files", len(files))
-
-	for _, file := range files {
-		if err = addFile(db, *server, file); err != nil {
-			log.Printf("unable to add file: %v", err)
-		}
-	}
+	return sharefiles, nil
 }
