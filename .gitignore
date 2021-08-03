@@ -1,3 +1,4 @@
 .env
 smbwatch
 *.db
+dist/
