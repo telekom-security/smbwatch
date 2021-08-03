@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hirochachacha/go-smb2"
+	log "github.com/sirupsen/logrus"
 )
 
 var MaxDepth int
@@ -49,7 +49,7 @@ func smbGetShareFiles(smbShare *smb2.Share, folder string) ([]ShareFile, error) 
 	var sf []ShareFile
 
 	if strings.Count(folder, `\`) > MaxDepth {
-		return sf, fmt.Errorf("max depth of %v reached", MaxDepth)
+		return sf, fmt.Errorf("max depth %v reached", MaxDepth)
 	}
 
 	f, err := smbShare.ReadDir(folder)
@@ -63,11 +63,14 @@ func smbGetShareFiles(smbShare *smb2.Share, folder string) ([]ShareFile, error) 
 			path := filepath.Join(folder, file.Name())
 			path = strings.ReplaceAll(path, "/", `\`)
 
-			log.Printf("found folder: %v", path)
+			log.Debugf("folder: %v", path)
 
 			subfolderFiles, err := smbGetShareFiles(smbShare, path)
 			if err != nil {
-				log.Printf("could not read folder : %v", err)
+				log.WithFields(log.Fields{
+					"error":  err,
+					"folder": path,
+				}).Debug("could not read folder")
 			} else {
 				sf = append(sf, subfolderFiles...)
 			}
@@ -91,11 +94,11 @@ func smbGetFiles(s *smb2.Session) ([]ShareFile, error) {
 	}
 
 	for _, name := range names {
-		log.Printf("indexing share %v", name)
+		log.WithField("share", name).Debug("indexing share")
 
 		fs, err := s.Mount(name)
 		if err != nil {
-			log.Printf("could not mount %v: %v", name, err)
+			log.Debugf("could not mount %v: %v", name, err)
 			continue
 		}
 
@@ -103,7 +106,7 @@ func smbGetFiles(s *smb2.Session) ([]ShareFile, error) {
 		fs.Umount()
 
 		if err != nil {
-			log.Printf("could not get share files from %v: %v", name, err)
+			log.Debugf("could not get share files from %v: %v", name, err)
 			continue
 		}
 
@@ -118,6 +121,7 @@ func smbGetFiles(s *smb2.Session) ([]ShareFile, error) {
 
 func main() {
 	var worker int
+	var debugMode bool
 
 	server := flag.String("server", "", "smb server")
 	user := flag.String("user", "", "NTLM user")
@@ -131,19 +135,25 @@ func main() {
 
 	flag.IntVar(&MaxDepth, "maxdepth", 3, "max recursion depth when retrieving files")
 	flag.IntVar(&worker, "worker", 8, "amount of parallel worker")
+	flag.BoolVar(&debugMode, "debug", false, "debug mode")
 
 	flag.Parse()
+
+	if debugMode {
+		log.SetLevel(log.DebugLevel)
+	}
 
 	if *user == "" || *pass == "" {
 		fmt.Fprintf(os.Stderr, "please specify a user and password")
 		os.Exit(1)
 	}
 
-	log.Printf("max depth: %v", MaxDepth)
+	log.Infof("max depth: %v", MaxDepth)
+	log.Infof("worker: %v", MaxDepth)
 
 	db, err := connectAndSetup(*dbname)
 	if err != nil {
-		log.Fatalf("unable to create db: %v", err)
+		log.WithField("error", err).Fatal("unable to create db")
 	}
 
 	var serverlist []string
@@ -164,34 +174,51 @@ func main() {
 
 		baseDn := fmt.Sprintf("DC%v", splitted[1])
 
-		log.Printf("ldapServer=%v, ldapDn='%v', ldapBaseDn=%v, ldapFilter=%v", *ldapServer, *ldapDn, baseDn, *ldapFilter)
+		log.WithFields(log.Fields{
+			"ldapServer": *ldapServer,
+			"ldapDn":     *ldapDn,
+			"ldapBaseDn": baseDn,
+			"ldapFilter": *ldapFilter,
+		}).Info("querying LDAP")
 
 		servers, err := getLdapServers(*ldapServer, *ldapDn, *pass, baseDn, *ldapFilter)
 		if err != nil {
 			log.Fatalf("failed getting servers via ldaps: %v", err)
 		}
 
-		log.Printf("retrieved %v servers from ldaps", len(servers))
+		log.WithField("serverCount", len(servers)).Info("retrieved serverlist from LDAP")
 
 		serverlist = append(serverlist, servers...)
 	}
 
+	// using a semaphore here will limit max. concurrency
+	semaphore := make(chan int, worker)
+
 	for _, s := range serverlist {
-		log.Printf("enumerating %v", s)
+		semaphore <- 1
 
-		files, err := enumerateServer(s, *user, *pass)
-		if err != nil {
-			log.Printf("unable to enumerate %v: %v", s, err)
-			continue
-		}
+		go func(s string, user string, pass string) {
+			log.WithField("server", s).Infof("starting enumeration")
 
-		log.Printf("retrieved %v files", len(files))
-
-		for _, file := range files {
-			if err = addFile(db, *server, file); err != nil {
-				log.Printf("unable to add file: %v", err)
+			files, err := enumerateServer(s, user, pass)
+			if err != nil {
+				log.WithFields(log.Fields{
+					"error":  err,
+					"server": s,
+				}).Warn("unable to enumerate")
+				return
 			}
-		}
+
+			log.Printf("retrieved %v files", len(files))
+
+			for _, file := range files {
+				if err = addFile(db, s, file); err != nil {
+					log.WithField("error", err).Error("unable to save file to sqlite", err)
+				}
+			}
+
+			<-semaphore
+		}(s, *user, *pass)
 
 	}
 }
