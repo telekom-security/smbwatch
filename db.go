@@ -42,7 +42,7 @@ func connectAndSetup(name string) (*sql.DB, error) {
 	return db, nil
 }
 
-func addFile(db *sql.DB, server string, f ShareFile) error {
+func addFile(db *sql.DB, f ShareFile) error {
 
 	ext := filepath.Ext(f.File.Name())
 	if strings.HasPrefix(ext, ".") {
@@ -52,7 +52,7 @@ func addFile(db *sql.DB, server string, f ShareFile) error {
 	sql := "INSERT INTO files (server, sharename, name, path, extension, size, modified_at, mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
 	_, err := db.Exec(
 		sql,
-		server,
+		f.ServerName,
 		f.ShareName,
 		f.File.Name(),
 		f.Folder,
