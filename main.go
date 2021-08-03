@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hirochachacha/go-smb2"
@@ -24,6 +25,13 @@ type ShareFile struct {
 	File       fs.FileInfo
 	Folder     string
 }
+
+var (
+	filesCount   uint64
+	foldersCount uint64
+	sharesCount  uint64
+	serversCount uint64
+)
 
 func main() {
 	var worker int
@@ -113,7 +121,20 @@ func main() {
 		}
 	}()
 
+	// waitgroup to wait for all goroutines to finish
 	var wg sync.WaitGroup
+
+	// metric logger
+	go func() {
+		for _ = range time.Tick(time.Second * 10) {
+			log.WithFields(log.Fields{
+				"servers": serversCount,
+				"shares":  sharesCount,
+				"folders": foldersCount,
+				"files":   filesCount,
+			}).Info("metrics")
+		}
+	}()
 
 	for _, s := range serverlist {
 		semaphore <- 1
@@ -121,6 +142,11 @@ func main() {
 
 		go func(s string, user string, pass string) {
 			defer wg.Done()
+			defer func() {
+				atomic.AddUint64(&serversCount, 1)
+				<-semaphore
+			}()
+
 			log.WithField("server", s).Infof("starting enumeration")
 
 			if err := enumerateServer(s, user, pass, writer); err != nil {
@@ -128,11 +154,9 @@ func main() {
 					"error":  err,
 					"server": s,
 				}).Warn("unable to enumerate")
-				<-semaphore
 				return
 			}
 
-			<-semaphore
 		}(s, *user, *pass)
 
 	}
@@ -178,6 +202,8 @@ func smbGetShareFiles(smbShare *smb2.Share, folder string) ([]ShareFile, error) 
 	for _, file := range f {
 
 		if file.IsDir() {
+			atomic.AddUint64(&foldersCount, 1)
+
 			path := filepath.Join(folder, file.Name())
 			path = strings.ReplaceAll(path, "/", `\`)
 
@@ -192,6 +218,8 @@ func smbGetShareFiles(smbShare *smb2.Share, folder string) ([]ShareFile, error) 
 			} else {
 				sf = append(sf, subfolderFiles...)
 			}
+		} else {
+			atomic.AddUint64(&filesCount, 1)
 		}
 
 		sf = append(sf, ShareFile{
@@ -210,6 +238,7 @@ func smbGetFiles(s *smb2.Session, serverName string, writer chan ShareFile) erro
 	}
 
 	for _, name := range names {
+		atomic.AddUint64(&sharesCount, 1)
 		log.WithField("share", name).Debug("indexing share")
 
 		fs, err := s.Mount(name)
