@@ -206,6 +206,7 @@ func main() {
 					"error":  err,
 					"server": s,
 				}).Warn("unable to enumerate")
+				<-semaphore
 				return
 			}
 
