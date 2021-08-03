@@ -37,6 +37,8 @@ func connectAndSetup(name string) (*sql.DB, error) {
 		}
 	}
 
+	db.SetMaxOpenConns(1)
+
 	return db, nil
 }
 
