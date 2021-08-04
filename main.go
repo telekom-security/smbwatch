@@ -40,6 +40,7 @@ func main() {
 	var worker int
 	var debugMode bool
 	var err error
+	var excludeShares []string
 
 	server := flag.String("server", "", "smb server")
 	user := flag.String("user", "", "NTLM user")
@@ -50,6 +51,8 @@ func main() {
 	ldapServer := flag.String("ldapServer", "", "ldap server to get smb server list")
 	ldapDn := flag.String("ldapDn", "", "ldap distinguished name")
 	ldapFilter := flag.String("ldapFilter", "(OperatingSystem=*server*)", "ldap filter to search for shares")
+
+	excludeSharesList := flag.String("excludeShares", "", "share names to exclude, separated by a ','")
 
 	flag.IntVar(&MaxDepth, "maxdepth", 3, "max recursion depth when retrieving files")
 	flag.IntVar(&worker, "worker", 8, "amount of parallel worker")
@@ -65,6 +68,10 @@ func main() {
 	if *user == "" || *pass == "" {
 		fmt.Fprintf(os.Stderr, "please specify a user and password")
 		os.Exit(1)
+	}
+
+	if *excludeSharesList != "" {
+		excludeShares = strings.Split(*excludeSharesList, ",")
 	}
 
 	log.Infof("max depth: %v", MaxDepth)
@@ -154,7 +161,7 @@ func main() {
 
 			log.WithField("server", s).Infof("starting enumeration")
 
-			if err := enumerateServer(s, user, pass, writer); err != nil {
+			if err := enumerateServer(s, user, pass, excludeShares, writer); err != nil {
 				log.WithFields(log.Fields{
 					"error":  err,
 					"server": s,
@@ -235,13 +242,21 @@ func smbGetShareFiles(smbShare *smb2.Share, folder, shareName, serverName string
 	return nil
 }
 
-func smbGetFiles(s *smb2.Session, serverName string, writer chan ShareFile) error {
+func smbGetFiles(s *smb2.Session, serverName string, excludeShares []string, writer chan ShareFile) error {
 	names, err := s.ListSharenames()
 	if err != nil {
 		return fmt.Errorf("unable to list shares: %v", err)
 	}
 
 	for _, name := range names {
+
+		if contains(excludeShares, name) {
+			log.WithFields(log.Fields{
+				"sharename": name,
+				"server":    serverName,
+			}).Debugf("skipping excluded share")
+			continue
+		}
 
 		isScanned, err := shareScanned(db, serverName, name)
 		if err != nil {
@@ -285,7 +300,7 @@ func smbGetFiles(s *smb2.Session, serverName string, writer chan ShareFile) erro
 	return nil
 }
 
-func enumerateServer(server, user, pass string, writer chan ShareFile) error {
+func enumerateServer(server, user, pass string, excludeShares []string, writer chan ShareFile) error {
 	var err error
 
 	conn, smbSession, err := smbSession(server, user, pass)
@@ -296,5 +311,13 @@ func enumerateServer(server, user, pass string, writer chan ShareFile) error {
 	defer conn.Close()
 	defer smbSession.Logoff()
 
-	return smbGetFiles(smbSession, server, writer)
+	return smbGetFiles(smbSession, server, excludeShares, writer)
+}
+func contains(s []string, e string) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
 }

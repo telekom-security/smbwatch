@@ -1,6 +1,16 @@
 # smbwatch
 
-recursively retries all filenames from an smbshare and persists to a sqlite db.
+recursively retrieves all files and folders from an smbshare and persists to a sqlite db.
+it is also possible to retrieve the list of servers from LDAP.
+
+Features:
+
+* Query list of all servers from LDAP with `-ldap*`
+* or enumerate a single share with `-server`
+* Concurrency for fast retrieval, max. one connection per server
+* Scans can be resumed
+* All shares, folders and files are persisted to sqlite
+* Exclude specific shares by name
 
 ## Installation and Usage
 
@@ -12,11 +22,13 @@ Clone and build (or downloaded a release):
 Usage:
 
     $ ./smbwatch -h
-    Usage of ./smbwatch:
+    Usage of smbwatch:
       -dbname string
             sqlite filename (default "sqlite.db")
       -debug
             debug mode
+      -excludeShares string
+            share names to exclude, separated by a ','
       -ldapDn string
             ldap distinguished name
       -ldapFilter string
@@ -29,6 +41,8 @@ Usage:
             NTLM pass
       -server string
             smb server
+      -timeout int
+            smb server connect timeout (default 5)
       -user string
             NTLM user
       -worker int
@@ -39,4 +53,4 @@ ldap and enumerate all of them, pass the `-ldap*` arguments.
     
 Example:
 
-    smbwatch -user A123456 -pass A123456 -ldapServer ldaps://foo.bar.internal.com:636 -ldapDn CN=A123456,OU=Users,OU=DE,DC=foo,DC=bar,DC=internal,DC=com
+    $ smbwatch -user A123456 -pass A123456 -ldapServer ldaps://foo.bar.internal.com:636 -ldapDn CN=A123456,OU=Users,OU=DE,DC=foo,DC=bar,DC=internal,DC=com

@@ -50,7 +50,7 @@ func connectAndSetup(name string) (*sql.DB, error) {
 }
 
 func addShare(db *sql.DB, servername, sharename string) error {
-	sql := "INSERT INTO shares (server, sharename, state, created_at) VALUES ($1, $2, 'started', datetime('now'))"
+	sql := "INSERT INTO shares (server, sharename, state, created_at) VALUES ($1, $2, 'started', datetime('now')) ON CONFLICT DO NOTHING"
 	_, err := db.Exec(sql, servername, sharename)
 	return err
 }
@@ -64,7 +64,7 @@ func updateShare(db *sql.DB, servername, sharename, state string) error {
 func shareScanned(db *sql.DB, servername, sharename string) (bool, error) {
 	var count int
 
-	sql := "SELECT count(*) FROM shares where server=$1 and sharename=$2"
+	sql := "SELECT count(*) FROM shares where server=$1 and sharename=$2 and state != 'started'"
 	if err := db.QueryRow(sql, servername, sharename).Scan(&count); err != nil {
 		return false, err
 	}
