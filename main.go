@@ -64,7 +64,8 @@ func main() {
 	}
 
 	log.Infof("max depth: %v", MaxDepth)
-	log.Infof("worker: %v", MaxDepth)
+	log.Infof("worker: %v", worker)
+	log.Infof("timeout: %v", timeout)
 
 	db, err := connectAndSetup(*dbname)
 	if err != nil {
@@ -116,7 +117,7 @@ func main() {
 	go func() {
 		for sf := range writer {
 			if err = addFile(db, sf); err != nil {
-				log.WithField("error", err).Error("unable to save file to sqlite", err)
+				log.WithField("error", err).Error("unable to save to sqlite")
 			}
 		}
 	}()
@@ -126,7 +127,7 @@ func main() {
 
 	// metric logger
 	go func() {
-		for _ = range time.Tick(time.Second * 10) {
+		for range time.Tick(time.Second * 10) {
 			log.WithFields(log.Fields{
 				"servers": serversCount,
 				"shares":  sharesCount,
@@ -153,9 +154,11 @@ func main() {
 				log.WithFields(log.Fields{
 					"error":  err,
 					"server": s,
-				}).Warn("unable to enumerate")
+				}).Warn("stopped enumeration")
 				return
 			}
+
+			log.WithField("server", s).Info("finished enumeration")
 
 		}(s, *user, *pass)
 
@@ -187,16 +190,14 @@ func smbSession(server, user, password string) (net.Conn, *smb2.Session, error) 
 	return conn, s, nil
 }
 
-func smbGetShareFiles(smbShare *smb2.Share, folder string) ([]ShareFile, error) {
-	var sf []ShareFile
-
+func smbGetShareFiles(smbShare *smb2.Share, folder, shareName, serverName string, writer chan ShareFile) error {
 	if strings.Count(folder, `\`) > MaxDepth {
-		return sf, fmt.Errorf("max depth %v reached", MaxDepth)
+		return fmt.Errorf("max depth %v reached", MaxDepth)
 	}
 
 	f, err := smbShare.ReadDir(folder)
 	if err != nil {
-		return sf, fmt.Errorf("could not open folder %v: %v", folder, err)
+		return fmt.Errorf("could not open folder %v: %v", folder, err)
 	}
 
 	for _, file := range f {
@@ -209,26 +210,25 @@ func smbGetShareFiles(smbShare *smb2.Share, folder string) ([]ShareFile, error) 
 
 			log.Debugf("folder: %v", path)
 
-			subfolderFiles, err := smbGetShareFiles(smbShare, path)
-			if err != nil {
+			if err := smbGetShareFiles(smbShare, path, shareName, serverName, writer); err != nil {
 				log.WithFields(log.Fields{
 					"error":  err,
 					"folder": path,
 				}).Debug("could not read folder")
-			} else {
-				sf = append(sf, subfolderFiles...)
 			}
 		} else {
 			atomic.AddUint64(&filesCount, 1)
 		}
 
-		sf = append(sf, ShareFile{
-			File:   file,
-			Folder: folder,
-		})
+		writer <- ShareFile{
+			ServerName: serverName,
+			ShareName:  shareName,
+			File:       file,
+			Folder:     folder,
+		}
 	}
 
-	return sf, nil
+	return nil
 }
 
 func smbGetFiles(s *smb2.Session, serverName string, writer chan ShareFile) error {
@@ -247,18 +247,12 @@ func smbGetFiles(s *smb2.Session, serverName string, writer chan ShareFile) erro
 			continue
 		}
 
-		files, err := smbGetShareFiles(fs, ".")
+		err = smbGetShareFiles(fs, ".", name, serverName, writer)
 		fs.Umount()
 
 		if err != nil {
 			log.Debugf("could not get share files from %v: %v", name, err)
 			continue
-		}
-
-		for _, file := range files {
-			file.ShareName = name
-			file.ServerName = serverName
-			writer <- file
 		}
 	}
 

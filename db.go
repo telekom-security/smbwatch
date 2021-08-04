@@ -25,7 +25,7 @@ var schema = []string{
 }
 
 func connectAndSetup(name string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", name)
+	db, err := sql.Open("sqlite3", name+"?cache=shared&mode=rwc&_journal_mode=WAL")
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func connectAndSetup(name string) (*sql.DB, error) {
 		}
 	}
 
-	db.SetMaxOpenConns(1)
+	// db.SetMaxOpenConns(1)
 
 	return db, nil
 }

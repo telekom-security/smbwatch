@@ -2,3 +2,4 @@
 smbwatch
 *.db
 dist/
+sqlite*
