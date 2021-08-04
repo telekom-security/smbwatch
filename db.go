@@ -22,6 +22,13 @@ var schema = []string{
     mode int)`,
 	`CREATE INDEX IF NOT EXISTS files_extension ON files (extension)`,
 	`CREATE INDEX IF NOT EXISTS files_name ON files (name)`,
+	`CREATE TABLE IF NOT EXISTS shares (
+    server text not null,
+    sharename text not null,
+    state text,
+    created_at datetime,
+    PRIMARY KEY (server, sharename)
+    )`,
 }
 
 func connectAndSetup(name string) (*sql.DB, error) {
@@ -40,6 +47,29 @@ func connectAndSetup(name string) (*sql.DB, error) {
 	// db.SetMaxOpenConns(1)
 
 	return db, nil
+}
+
+func addShare(db *sql.DB, servername, sharename string) error {
+	sql := "INSERT INTO shares (server, sharename, state, created_at) VALUES ($1, $2, 'started', datetime('now'))"
+	_, err := db.Exec(sql, servername, sharename)
+	return err
+}
+
+func updateShare(db *sql.DB, servername, sharename, state string) error {
+	sql := "UPDATE shares set state=$1 where server=$2 and sharename=$3"
+	_, err := db.Exec(sql, state, servername, sharename)
+	return err
+}
+
+func shareScanned(db *sql.DB, servername, sharename string) (bool, error) {
+	var count int
+
+	sql := "SELECT count(*) FROM shares where server=$1 and sharename=$2"
+	if err := db.QueryRow(sql, servername, sharename).Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
 }
 
 func addFile(db *sql.DB, f ShareFile) error {

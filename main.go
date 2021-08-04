@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -19,6 +20,8 @@ import (
 var MaxDepth int
 var timeout int
 
+var db *sql.DB
+
 type ShareFile struct {
 	ServerName string
 	ShareName  string
@@ -36,6 +39,7 @@ var (
 func main() {
 	var worker int
 	var debugMode bool
+	var err error
 
 	server := flag.String("server", "", "smb server")
 	user := flag.String("user", "", "NTLM user")
@@ -67,7 +71,7 @@ func main() {
 	log.Infof("worker: %v", worker)
 	log.Infof("timeout: %v", timeout)
 
-	db, err := connectAndSetup(*dbname)
+	db, err = connectAndSetup(*dbname)
 	if err != nil {
 		log.WithField("error", err).Fatal("unable to create db")
 	}
@@ -238,12 +242,31 @@ func smbGetFiles(s *smb2.Session, serverName string, writer chan ShareFile) erro
 	}
 
 	for _, name := range names {
+
+		isScanned, err := shareScanned(db, serverName, name)
+		if err != nil {
+			return fmt.Errorf("error getting scan count: %v", err)
+		}
+
+		if isScanned {
+			log.WithFields(log.Fields{
+				"share":  name,
+				"server": serverName,
+			}).Info("skipping share, already indexed")
+			continue
+		}
+
 		atomic.AddUint64(&sharesCount, 1)
 		log.WithField("share", name).Debug("indexing share")
+
+		if err := addShare(db, serverName, name); err != nil {
+			log.Errorf("error saving share: %v", err)
+		}
 
 		fs, err := s.Mount(name)
 		if err != nil {
 			log.Debugf("could not mount %v: %v", name, err)
+			updateShare(db, serverName, name, "failed")
 			continue
 		}
 
@@ -252,8 +275,11 @@ func smbGetFiles(s *smb2.Session, serverName string, writer chan ShareFile) erro
 
 		if err != nil {
 			log.Debugf("could not get share files from %v: %v", name, err)
+			updateShare(db, serverName, name, "failed")
 			continue
 		}
+
+		updateShare(db, serverName, name, "finished")
 	}
 
 	return nil
