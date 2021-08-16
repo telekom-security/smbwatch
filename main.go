@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -64,6 +63,11 @@ func main() {
 
 	flag.Parse()
 
+	log.Infof("max depth: %v", MaxDepth)
+	log.Infof("worker: %v", worker)
+	log.Infof("timeout: %v", timeout)
+	log.Infof("excluding shares: %v", excludeShares)
+
 	if debugMode {
 		log.SetLevel(log.DebugLevel)
 	}
@@ -77,11 +81,6 @@ func main() {
 	tuiApp, logWriter := renderTui()
 
 	log.SetOutput(logWriter)
-
-	if *user == "" || *pass == "" {
-		fmt.Fprintf(os.Stderr, "please specify a user and password")
-		os.Exit(1)
-	}
 
 	if *excludeSharesList != "" {
 		excludeShares = strings.Split(*excludeSharesList, ",")
@@ -98,10 +97,9 @@ func main() {
 func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer, ldapDn, ldapFilter string, excludeShares []string) {
 	var err error
 
-	log.Infof("max depth: %v", MaxDepth)
-	log.Infof("worker: %v", worker)
-	log.Infof("timeout: %v", timeout)
-	log.Infof("excluding shares: %v", excludeShares)
+	defer func() {
+		log.Info("quit")
+	}()
 
 	db, err := connectAndSetup(dbname)
 	if err != nil {

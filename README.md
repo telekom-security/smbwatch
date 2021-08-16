@@ -17,7 +17,7 @@ Features:
 Clone and build (or downloaded a release):
 
     $ git clone
-    $ go build
+    $ make
     
 Usage:
 
