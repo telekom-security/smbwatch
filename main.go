@@ -101,7 +101,7 @@ func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer
 		log.Info("quit")
 	}()
 
-	db, err := connectAndSetup(dbname)
+	db, err = connectAndSetup(dbname)
 	if err != nil {
 		log.WithField("error", err).Fatal("unable to create db")
 	}
