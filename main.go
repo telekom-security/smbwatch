@@ -30,6 +30,10 @@ type ShareFile struct {
 }
 
 var (
+	// filled during compile time
+	commitHash string
+	commitDate string
+
 	filesCount   uint64
 	foldersCount uint64
 	sharesCount  uint64
@@ -39,7 +43,6 @@ var (
 func main() {
 	var worker int
 	var debugMode bool
-	var err error
 	var excludeShares []string
 
 	server := flag.String("server", "", "smb server")
@@ -65,6 +68,16 @@ func main() {
 		log.SetLevel(log.DebugLevel)
 	}
 
+	log.SetFormatter(&log.TextFormatter{
+		DisableColors: true,
+		FullTimestamp: false,
+	})
+
+	// setup TUI app and connect logger
+	tuiApp, logWriter := renderTui()
+
+	log.SetOutput(logWriter)
+
 	if *user == "" || *pass == "" {
 		fmt.Fprintf(os.Stderr, "please specify a user and password")
 		os.Exit(1)
@@ -74,43 +87,58 @@ func main() {
 		excludeShares = strings.Split(*excludeSharesList, ",")
 	}
 
+	// run main procedure in goroutine because of TUI
+	go start(MaxDepth, worker, timeout, *dbname, *server, *user, *pass, *ldapServer, *ldapDn, *ldapFilter, excludeShares)
+
+	if err := tuiApp.Run(); err != nil {
+		panic(err)
+	}
+}
+
+func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer, ldapDn, ldapFilter string, excludeShares []string) {
+	var err error
+
 	log.Infof("max depth: %v", MaxDepth)
 	log.Infof("worker: %v", worker)
 	log.Infof("timeout: %v", timeout)
+	log.Infof("excluding shares: %v", excludeShares)
 
-	db, err = connectAndSetup(*dbname)
+	db, err := connectAndSetup(dbname)
 	if err != nil {
 		log.WithField("error", err).Fatal("unable to create db")
 	}
 
 	var serverlist []string
 
-	if *server != "" {
-		serverlist = append(serverlist, *server)
+	if server != "" {
+		serverlist = append(serverlist, server)
 	}
 
-	if *ldapServer != "" {
-		if *ldapDn == "" {
-			log.Fatalf("please specify a -ldapDn")
+	if ldapServer != "" {
+		if ldapDn == "" {
+			log.Error("please specify a -ldapDn")
+			return
 		}
 
-		splitted := strings.SplitN(*ldapDn, "DC", 2)
+		splitted := strings.SplitN(ldapDn, "DC", 2)
 		if len(splitted) <= 1 {
-			log.Fatalf("invalid DN, could not extract baseDn")
+			log.Error("invalid DN, could not extract baseDn")
+			return
 		}
 
 		baseDn := fmt.Sprintf("DC%v", splitted[1])
 
 		log.WithFields(log.Fields{
-			"ldapServer": *ldapServer,
-			"ldapDn":     *ldapDn,
+			"ldapServer": ldapServer,
+			"ldapDn":     ldapDn,
 			"ldapBaseDn": baseDn,
-			"ldapFilter": *ldapFilter,
+			"ldapFilter": ldapFilter,
 		}).Info("querying LDAP")
 
-		servers, err := getLdapServers(*ldapServer, *ldapDn, *pass, baseDn, *ldapFilter)
+		servers, err := getLdapServers(ldapServer, ldapDn, pass, baseDn, ldapFilter)
 		if err != nil {
-			log.Fatalf("failed getting servers via ldaps: %v", err)
+			log.Errorf("failed getting servers via ldaps: %v", err)
+			return
 		}
 
 		log.WithField("serverCount", len(servers)).Info("retrieved serverlist from LDAP")
@@ -136,18 +164,6 @@ func main() {
 	// waitgroup to wait for all goroutines to finish
 	var wg sync.WaitGroup
 
-	// metric logger
-	go func() {
-		for range time.Tick(time.Second * 10) {
-			log.WithFields(log.Fields{
-				"servers": serversCount,
-				"shares":  sharesCount,
-				"folders": foldersCount,
-				"files":   filesCount,
-			}).Info("metrics")
-		}
-	}()
-
 	for _, s := range serverlist {
 		semaphore <- 1
 		wg.Add(1)
@@ -171,12 +187,14 @@ func main() {
 
 			log.WithField("server", s).Info("finished enumeration")
 
-		}(s, *user, *pass)
+		}(s, user, pass)
 
 	}
 
 	wg.Wait()
 	close(writer)
+
+	log.Infof("finished enumeration")
 }
 
 func smbSession(server, user, password string) (net.Conn, *smb2.Session, error) {
