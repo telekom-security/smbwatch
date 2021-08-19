@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"flag"
 	"fmt"
 	"io/fs"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -62,6 +64,13 @@ func main() {
 	flag.BoolVar(&debugMode, "debug", false, "debug mode")
 
 	flag.Parse()
+
+	if *pass == "" {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Enter password: ")
+		pw, _ := reader.ReadString('\n')
+		*pass = strings.TrimSpace(pw)
+	}
 
 	log.Infof("max depth: %v", MaxDepth)
 	log.Infof("worker: %v", worker)
