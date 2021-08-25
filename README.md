@@ -1,5 +1,7 @@
 # smbwatch
 
+![](screenshot.png)
+
 recursively retrieves all files and folders from an smbshare and persists to a sqlite db.
 it is also possible to retrieve the list of servers from LDAP.
 

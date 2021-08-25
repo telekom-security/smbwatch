@@ -105,17 +105,17 @@ func main() {
 
 func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer, ldapDn, ldapFilter string, excludeShares []string) {
 	var err error
-
-	defer func() {
-		log.Info("quit")
-	}()
+	var serverlist []string
 
 	db, err = connectAndSetup(dbname)
 	if err != nil {
 		log.WithField("error", err).Fatal("unable to create db")
 	}
 
-	var serverlist []string
+	defer func() {
+		log.Info("quit")
+		db.Close()
+	}()
 
 	if server != "" {
 		serverlist = append(serverlist, server)
