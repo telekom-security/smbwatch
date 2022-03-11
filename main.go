@@ -118,7 +118,14 @@ func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer
 	}()
 
 	if server != "" {
-		serverlist = append(serverlist, server)
+		// check for comma separated list of servers from cmd line args
+		if (strings.Contains(server, ",")) {
+			for _, s := range strings.Split(server, ",") {
+				serverlist = append(serverlist, s)
+			}
+		} else {
+			serverlist = append(serverlist, server)
+		}
 	}
 
 	if ldapServer != "" {
