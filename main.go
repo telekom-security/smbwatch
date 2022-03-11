@@ -46,7 +46,7 @@ func main() {
 	var debugMode bool
 	var excludeShares []string
 
-	server := flag.String("server", "", "smb server")
+	server := flag.String("server", "", "smb server (add multiple servers comma separated like 127.0.0.1,127.0.0.2")
 	user := flag.String("user", "", "NTLM user")
 	pass := flag.String("pass", "", "NTLM pass")
 	dbname := flag.String("dbname", "sqlite.db", "sqlite filename")
@@ -118,7 +118,14 @@ func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer
 	}()
 
 	if server != "" {
-		serverlist = append(serverlist, server)
+		// check for comma separated list of servers from cmd line args
+		if (strings.Contains(server, ",")) {
+			for _, s := range strings.Split(server, ",") {
+				serverlist = append(serverlist, s)
+			}
+		} else {
+			serverlist = append(serverlist, server)
+		}
 	}
 
 	if ldapServer != "" {
