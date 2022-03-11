@@ -46,7 +46,7 @@ func main() {
 	var debugMode bool
 	var excludeShares []string
 
-	server := flag.String("server", "", "smb server")
+	server := flag.String("server", "", "smb server (add multiple servers comma separated like 127.0.0.1,127.0.0.2")
 	user := flag.String("user", "", "NTLM user")
 	pass := flag.String("pass", "", "NTLM pass")
 	dbname := flag.String("dbname", "sqlite.db", "sqlite filename")
