@@ -41,22 +41,43 @@ var (
 	serversCount uint64
 )
 
+// go start(MaxDepth, worker, timeout, *dbname, *server, *user, *pass, *ldapServer, *ldapDn, *ldapFilter, excludeShares)
+type Options struct {
+	MaxDepth int
+	Worker   int
+	Timeout  int
+
+	DbName     string
+	Server     string
+	User       string
+	Pass       string
+	LdapServer string
+	LdapDn     string
+	LdapFilter string
+
+	ExcludeShares     []string
+	ExcludeExtensions []string
+}
+
 func main() {
 	var worker int
 	var debugMode bool
 	var excludeShares []string
+	var excludeExtensions []string
 
 	server := flag.String("server", "", "smb server (add multiple servers comma separated like 127.0.0.1,127.0.0.2")
 	user := flag.String("user", "", "NTLM user")
 	pass := flag.String("pass", "", "NTLM pass")
 	dbname := flag.String("dbname", "sqlite.db", "sqlite filename")
+	disableTui := flag.Bool("disableTui", false, "disable TUI")
 
 	// ldap specific options
 	ldapServer := flag.String("ldapServer", "", "ldap server to get smb server list")
 	ldapDn := flag.String("ldapDn", "", "ldap distinguished name")
 	ldapFilter := flag.String("ldapFilter", "(OperatingSystem=*server*)", "ldap filter to search for shares")
 
-	excludeSharesList := flag.String("excludeShares", "", "share names to exclude, separated by a ','")
+	excludeSharesList := flag.String("excludeShares", "", "share names to exclude, separated by a comma. Example: foo,bar")
+	excludeExtList := flag.String("excludeExtensions", "", "extensions to exclude, separated by a comma. Example: dll,exe")
 
 	flag.IntVar(&MaxDepth, "maxdepth", 3, "max recursion depth when retrieving files")
 	flag.IntVar(&worker, "worker", 8, "amount of parallel worker")
@@ -72,42 +93,83 @@ func main() {
 		*pass = strings.TrimSpace(pw)
 	}
 
-	log.Infof("max depth: %v", MaxDepth)
-	log.Infof("worker: %v", worker)
-	log.Infof("timeout: %v", timeout)
-	log.Infof("excluding shares: %v", excludeShares)
+	log.Debugf("max depth: %v", MaxDepth)
+	log.Debugf("worker: %v", worker)
+	log.Debugf("timeout: %v", timeout)
+	log.Debugf("excluding shares: %v", excludeShares)
 
 	if debugMode {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	log.SetFormatter(&log.TextFormatter{
-		DisableColors: true,
-		FullTimestamp: false,
-	})
-
-	// setup TUI app and connect logger
-	tuiApp, logWriter := renderTui()
-
-	log.SetOutput(logWriter)
-
 	if *excludeSharesList != "" {
 		excludeShares = strings.Split(*excludeSharesList, ",")
 	}
 
+	if *excludeExtList != "" {
+		for _, val := range strings.Split(*excludeExtList, ",") {
+			excludeExtensions = append(excludeExtensions, "."+val)
+		}
+	}
+
+	opts := Options{
+		MaxDepth: MaxDepth,
+		Worker:   worker,
+		Timeout:  timeout,
+
+		DbName:            *dbname,
+		Server:            *server,
+		User:              *user,
+		Pass:              *pass,
+		LdapServer:        *ldapServer,
+		LdapDn:            *ldapDn,
+		LdapFilter:        *ldapFilter,
+		ExcludeShares:     excludeShares,
+		ExcludeExtensions: excludeExtensions,
+	}
+
+	if *disableTui {
+
+		// start stat logger
+		go func() {
+			for {
+				time.Sleep(5 * time.Second)
+				log.WithFields(log.Fields{
+					"filesCount":   filesCount,
+					"foldersCount": foldersCount,
+					"sharesCount":  sharesCount,
+					"serversCount": serversCount,
+				}).Info("statistics")
+			}
+		}()
+
+		start(opts)
+		return
+	}
+
+	// setup TUI app and connect logger
+	tuiApp, logWriter := renderTui()
+
+	// prepare logger for tui
+	log.SetFormatter(&log.TextFormatter{
+		DisableColors: true,
+		FullTimestamp: false,
+	})
+	log.SetOutput(logWriter)
+
 	// run main procedure in goroutine because of TUI
-	go start(MaxDepth, worker, timeout, *dbname, *server, *user, *pass, *ldapServer, *ldapDn, *ldapFilter, excludeShares)
+	go start(opts)
 
 	if err := tuiApp.Run(); err != nil {
 		panic(err)
 	}
 }
 
-func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer, ldapDn, ldapFilter string, excludeShares []string) {
+func start(options Options) {
 	var err error
 	var serverlist []string
 
-	db, err = connectAndSetup(dbname)
+	db, err = connectAndSetup(options.DbName)
 	if err != nil {
 		log.WithField("error", err).Fatal("unable to create db")
 	}
@@ -117,24 +179,24 @@ func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer
 		db.Close()
 	}()
 
-	if server != "" {
+	if options.Server != "" {
 		// check for comma separated list of servers from cmd line args
-		if (strings.Contains(server, ",")) {
-			for _, s := range strings.Split(server, ",") {
+		if strings.Contains(options.Server, ",") {
+			for _, s := range strings.Split(options.Server, ",") {
 				serverlist = append(serverlist, s)
 			}
 		} else {
-			serverlist = append(serverlist, server)
+			serverlist = append(serverlist, options.Server)
 		}
 	}
 
-	if ldapServer != "" {
-		if ldapDn == "" {
+	if options.LdapDn != "" {
+		if options.LdapDn == "" {
 			log.Error("please specify a -ldapDn")
 			return
 		}
 
-		splitted := strings.SplitN(ldapDn, "DC", 2)
+		splitted := strings.SplitN(options.LdapDn, "DC", 2)
 		if len(splitted) <= 1 {
 			log.Error("invalid DN, could not extract baseDn")
 			return
@@ -143,13 +205,13 @@ func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer
 		baseDn := fmt.Sprintf("DC%v", splitted[1])
 
 		log.WithFields(log.Fields{
-			"ldapServer": ldapServer,
-			"ldapDn":     ldapDn,
+			"ldapServer": options.LdapServer,
+			"ldapDn":     options.LdapDn,
 			"ldapBaseDn": baseDn,
-			"ldapFilter": ldapFilter,
+			"ldapFilter": options.LdapFilter,
 		}).Info("querying LDAP")
 
-		servers, err := getLdapServers(ldapServer, ldapDn, pass, baseDn, ldapFilter)
+		servers, err := getLdapServers(options.LdapServer, options.LdapDn, options.Pass, baseDn, options.LdapFilter)
 		if err != nil {
 			log.Errorf("failed getting servers via ldaps: %v", err)
 			return
@@ -161,7 +223,7 @@ func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer
 	}
 
 	// semaphore for concurrency
-	semaphore := make(chan int, worker)
+	semaphore := make(chan int, options.Worker)
 
 	// writer goroutine for synchronous sqlite writes
 	writer := make(chan ShareFile)
@@ -191,7 +253,7 @@ func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer
 
 			log.WithField("server", s).Infof("starting enumeration")
 
-			if err := enumerateServer(s, user, pass, excludeShares, writer); err != nil {
+			if err := enumerateServer(s, options, writer); err != nil {
 				log.WithFields(log.Fields{
 					"error":  err,
 					"server": s,
@@ -201,14 +263,14 @@ func start(maxDepth, worker, timeout int, dbname, server, user, pass, ldapServer
 
 			log.WithField("server", s).Info("finished enumeration")
 
-		}(s, user, pass)
+		}(s, options.User, options.Pass)
 
 	}
 
 	wg.Wait()
 	close(writer)
 
-	log.Infof("finished enumeration")
+	log.Infof("finished all enumerations")
 }
 
 func smbSession(server, user, password string) (net.Conn, *smb2.Session, error) {
@@ -233,7 +295,7 @@ func smbSession(server, user, password string) (net.Conn, *smb2.Session, error) 
 	return conn, s, nil
 }
 
-func smbGetShareFiles(smbShare *smb2.Share, folder, shareName, serverName string, writer chan ShareFile) error {
+func smbGetShareFiles(smbShare *smb2.Share, folder, shareName, serverName string, excludeExtensions []string, writer chan ShareFile) error {
 	if strings.Count(folder, `\`) > MaxDepth {
 		return fmt.Errorf("max depth %v reached", MaxDepth)
 	}
@@ -245,6 +307,13 @@ func smbGetShareFiles(smbShare *smb2.Share, folder, shareName, serverName string
 
 	for _, file := range f {
 
+		// check if file type should be excluded
+		if !file.IsDir() && len(excludeExtensions) > 0 {
+			if contains(excludeExtensions, filepath.Ext(strings.ToLower(file.Name()))) {
+				continue
+			}
+		}
+
 		if file.IsDir() {
 			atomic.AddUint64(&foldersCount, 1)
 
@@ -253,7 +322,7 @@ func smbGetShareFiles(smbShare *smb2.Share, folder, shareName, serverName string
 
 			log.Debugf("folder: %v", path)
 
-			if err := smbGetShareFiles(smbShare, path, shareName, serverName, writer); err != nil {
+			if err := smbGetShareFiles(smbShare, path, shareName, serverName, excludeExtensions, writer); err != nil {
 				log.WithFields(log.Fields{
 					"error":  err,
 					"folder": path,
@@ -274,7 +343,7 @@ func smbGetShareFiles(smbShare *smb2.Share, folder, shareName, serverName string
 	return nil
 }
 
-func smbGetFiles(s *smb2.Session, serverName string, excludeShares []string, writer chan ShareFile) error {
+func smbGetFiles(s *smb2.Session, serverName string, excludeShares, excludeExtensions []string, writer chan ShareFile) error {
 	names, err := s.ListSharenames()
 	if err != nil {
 		return fmt.Errorf("unable to list shares: %v", err)
@@ -317,7 +386,7 @@ func smbGetFiles(s *smb2.Session, serverName string, excludeShares []string, wri
 			continue
 		}
 
-		err = smbGetShareFiles(fs, ".", name, serverName, writer)
+		err = smbGetShareFiles(fs, ".", name, serverName, excludeExtensions, writer)
 		fs.Umount()
 
 		if err != nil {
@@ -332,10 +401,10 @@ func smbGetFiles(s *smb2.Session, serverName string, excludeShares []string, wri
 	return nil
 }
 
-func enumerateServer(server, user, pass string, excludeShares []string, writer chan ShareFile) error {
+func enumerateServer(server string, options Options, writer chan ShareFile) error {
 	var err error
 
-	conn, smbSession, err := smbSession(server, user, pass)
+	conn, smbSession, err := smbSession(server, options.User, options.Pass)
 	if err != nil {
 		return fmt.Errorf("unable to connect to %v: %v", server, err)
 	}
@@ -343,7 +412,7 @@ func enumerateServer(server, user, pass string, excludeShares []string, writer c
 	defer conn.Close()
 	defer smbSession.Logoff()
 
-	return smbGetFiles(smbSession, server, excludeShares, writer)
+	return smbGetFiles(smbSession, server, options.ExcludeShares, options.ExcludeExtensions, writer)
 }
 func contains(s []string, e string) bool {
 	for _, a := range s {

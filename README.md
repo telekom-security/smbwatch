@@ -12,7 +12,7 @@ Features:
 * Concurrency for fast retrieval, max. one connection per server
 * Scans can be resumed
 * All shares, folders and files are persisted to sqlite
-* Exclude specific shares by name
+* Exclude shares or extensions by flag
 
 ## Installation and Usage
 
@@ -29,8 +29,12 @@ Usage:
             sqlite filename (default "sqlite.db")
       -debug
             debug mode
+      -disableTui
+            disable TUI
+      -excludeExtensions string
+            extensions to exclude, separated by a comma. Example: dll,exe
       -excludeShares string
-            share names to exclude, separated by a ','
+            share names to exclude, separated by a comma. Example: foo,bar
       -ldapDn string
             ldap distinguished name
       -ldapFilter string
@@ -42,7 +46,7 @@ Usage:
       -pass string
             NTLM pass
       -server string
-            smb server
+            smb server (add multiple servers comma separated like 127.0.0.1,127.0.0.2
       -timeout int
             smb server connect timeout (default 5)
       -user string
