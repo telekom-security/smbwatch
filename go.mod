@@ -9,4 +9,5 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.8
 	github.com/rivo/tview v0.0.0-20210624165335-29d673af0ce2
 	github.com/sirupsen/logrus v1.8.1
+	golang.org/x/crypto v0.6.0 // indirect
 )
