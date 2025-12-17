@@ -8,7 +8,7 @@ require (
 	github.com/hirochachacha/go-smb2 v1.0.10
 	github.com/mattn/go-sqlite3 v1.14.8
 	github.com/rivo/tview v0.0.0-20210624165335-29d673af0ce2
-	github.com/sirupsen/logrus v1.8.1
+	github.com/sirupsen/logrus v1.8.3
 )
 
 require (
