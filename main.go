@@ -49,6 +49,7 @@ type Options struct {
 
 	DbName     string
 	Server     string
+	ServerFile string
 	User       string
 	Pass       string
 	LdapServer string
@@ -66,6 +67,7 @@ func main() {
 	var excludeExtensions []string
 
 	server := flag.String("server", "", "smb server (add multiple servers comma separated like 127.0.0.1,127.0.0.2")
+	serverFile := flag.String("serverFile", "", "file containing smb servers, one per line")
 	user := flag.String("user", "", "NTLM user")
 	pass := flag.String("pass", "", "NTLM pass")
 	dbname := flag.String("dbname", "sqlite.db", "sqlite filename")
@@ -119,6 +121,7 @@ func main() {
 
 		DbName:            *dbname,
 		Server:            *server,
+		ServerFile:        *serverFile,
 		User:              *user,
 		Pass:              *pass,
 		LdapServer:        *ldapServer,
@@ -188,6 +191,25 @@ func start(options Options) {
 		} else {
 			serverlist = append(serverlist, options.Server)
 		}
+	}
+
+	if options.ServerFile != "" {
+		f, err := os.Open(options.ServerFile)
+		if err != nil {
+			log.WithField("error", err).Fatal("unable to open server file")
+		}
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" && !strings.HasPrefix(line, "#") {
+				serverlist = append(serverlist, line)
+			}
+		}
+		f.Close()
+		if err := scanner.Err(); err != nil {
+			log.WithField("error", err).Fatal("error reading server file")
+		}
+		log.WithField("serverCount", len(serverlist)).Info("loaded servers from file")
 	}
 
 	if options.LdapDn != "" {
