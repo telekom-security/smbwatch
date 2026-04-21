@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -321,7 +322,9 @@ func smbSession(server string, opts Options) (net.Conn, *smb2.Session, error) {
 		if proxyErr != nil {
 			return nil, nil, fmt.Errorf("failed to create SOCKS5 proxy dialer: %v", proxyErr)
 		}
-		conn, err = dialSocksProxy.Dial("tcp", addr)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+		defer cancel()
+		conn, err = dialSocksProxy.(proxy.ContextDialer).DialContext(ctx, "tcp", addr)
 	} else {
 		dialer := net.Dialer{Timeout: time.Duration(timeout) * time.Second}
 		conn, err = dialer.Dial("tcp", addr)
