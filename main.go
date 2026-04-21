@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/hirochachacha/go-smb2"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/proxy"
 )
 
 var MaxDepth int
@@ -49,11 +51,16 @@ type Options struct {
 
 	DbName     string
 	Server     string
+	ServerFile string
 	User       string
 	Pass       string
 	LdapServer string
 	LdapDn     string
 	LdapFilter string
+
+	ProxyURL  string
+	ProxyUser string
+	ProxyPass string
 
 	ExcludeShares     []string
 	ExcludeExtensions []string
@@ -66,6 +73,7 @@ func main() {
 	var excludeExtensions []string
 
 	server := flag.String("server", "", "smb server (add multiple servers comma separated like 127.0.0.1,127.0.0.2")
+	serverFile := flag.String("serverFile", "", "file containing smb servers, one per line")
 	user := flag.String("user", "", "NTLM user")
 	pass := flag.String("pass", "", "NTLM pass")
 	dbname := flag.String("dbname", "sqlite.db", "sqlite filename")
@@ -75,6 +83,10 @@ func main() {
 	ldapServer := flag.String("ldapServer", "", "ldap server to get smb server list")
 	ldapDn := flag.String("ldapDn", "", "ldap distinguished name")
 	ldapFilter := flag.String("ldapFilter", "(OperatingSystem=*server*)", "ldap filter to search for shares")
+
+	proxyUrl := flag.String("proxyUrl", "", "SOCKS5 proxy URL, e.g. 127.0.0.1:1080")
+	proxyUser := flag.String("proxyUser", "", "SOCKS5 proxy username (optional)")
+	proxyPass := flag.String("proxyPass", "", "SOCKS5 proxy password (optional)")
 
 	excludeSharesList := flag.String("excludeShares", "", "share names to exclude, separated by a comma. Example: foo,bar")
 	excludeExtList := flag.String("excludeExtensions", "", "extensions to exclude, separated by a comma. Example: dll,exe")
@@ -119,6 +131,7 @@ func main() {
 
 		DbName:            *dbname,
 		Server:            *server,
+		ServerFile:        *serverFile,
 		User:              *user,
 		Pass:              *pass,
 		LdapServer:        *ldapServer,
@@ -126,6 +139,9 @@ func main() {
 		LdapFilter:        *ldapFilter,
 		ExcludeShares:     excludeShares,
 		ExcludeExtensions: excludeExtensions,
+		ProxyURL:          *proxyUrl,
+		ProxyUser:         *proxyUser,
+		ProxyPass:         *proxyPass,
 	}
 
 	if *disableTui {
@@ -188,6 +204,25 @@ func start(options Options) {
 		} else {
 			serverlist = append(serverlist, options.Server)
 		}
+	}
+
+	if options.ServerFile != "" {
+		f, err := os.Open(options.ServerFile)
+		if err != nil {
+			log.WithField("error", err).Fatal("unable to open server file")
+		}
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" && !strings.HasPrefix(line, "#") {
+				serverlist = append(serverlist, line)
+			}
+		}
+		f.Close()
+		if err := scanner.Err(); err != nil {
+			log.WithField("error", err).Fatal("error reading server file")
+		}
+		log.WithField("serverCount", len(serverlist)).Info("loaded servers from file")
 	}
 
 	if options.LdapDn != "" {
@@ -273,17 +308,35 @@ func start(options Options) {
 	log.Infof("finished all enumerations")
 }
 
-func smbSession(server, user, password string) (net.Conn, *smb2.Session, error) {
-	dialer := net.Dialer{Timeout: time.Duration(timeout) * time.Second}
-	conn, err := dialer.Dial("tcp", fmt.Sprintf("%v:445", server))
+func smbSession(server string, opts Options) (net.Conn, *smb2.Session, error) {
+	addr := fmt.Sprintf("%v:445", server)
+	var conn net.Conn
+	var err error
+
+	if opts.ProxyURL != "" {
+		var auth *proxy.Auth
+		if opts.ProxyUser != "" {
+			auth = &proxy.Auth{User: opts.ProxyUser, Password: opts.ProxyPass}
+		}
+		dialSocksProxy, proxyErr := proxy.SOCKS5("tcp", opts.ProxyURL, auth, proxy.Direct)
+		if proxyErr != nil {
+			return nil, nil, fmt.Errorf("failed to create SOCKS5 proxy dialer: %v", proxyErr)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+		defer cancel()
+		conn, err = dialSocksProxy.(proxy.ContextDialer).DialContext(ctx, "tcp", addr)
+	} else {
+		dialer := net.Dialer{Timeout: time.Duration(timeout) * time.Second}
+		conn, err = dialer.Dial("tcp", addr)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 
 	d := &smb2.Dialer{
 		Initiator: &smb2.NTLMInitiator{
-			User:     user,
-			Password: password,
+			User:     opts.User,
+			Password: opts.Pass,
 		},
 	}
 
@@ -404,7 +457,7 @@ func smbGetFiles(s *smb2.Session, serverName string, excludeShares, excludeExten
 func enumerateServer(server string, options Options, writer chan ShareFile) error {
 	var err error
 
-	conn, smbSession, err := smbSession(server, options.User, options.Pass)
+	conn, smbSession, err := smbSession(server, options)
 	if err != nil {
 		return fmt.Errorf("unable to connect to %v: %v", server, err)
 	}
