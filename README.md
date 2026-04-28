@@ -9,6 +9,9 @@ Features:
 
 * Query list of all servers from LDAP with `-ldap*`
 * or enumerate a single share with `-server`
+* or read targets from a file with `-serverFile`
+* SOCKS5 proxy support with `-proxyUrl`
+* NTLM domain authentication with `-domain`
 * Concurrency for fast retrieval, max. one connection per server
 * Scans can be resumed
 * All shares, folders and files are persisted to sqlite
@@ -45,12 +48,22 @@ Usage:
             max recursion depth when retrieving files (default 3)
       -pass string
             NTLM pass
+      -proxyPass string
+            SOCKS5 proxy password (optional)
+      -proxyUrl string
+            SOCKS5 proxy URL, e.g. 127.0.0.1:1080
+      -proxyUser string
+            SOCKS5 proxy username (optional)
       -server string
             smb server (add multiple servers comma separated like 127.0.0.1,127.0.0.2
+      -serverFile string
+            file containing smb servers, one per line
       -timeout int
             smb server connect timeout (default 5)
       -user string
             NTLM user
+      -domain string
+            NTLM domain
       -worker int
             amount of parallel worker (default 8)
             

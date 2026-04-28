@@ -52,8 +52,9 @@ type Options struct {
 	DbName     string
 	Server     string
 	ServerFile string
-	User       string
-	Pass       string
+	User   string
+	Pass   string
+	Domain string
 	LdapServer string
 	LdapDn     string
 	LdapFilter string
@@ -76,6 +77,7 @@ func main() {
 	serverFile := flag.String("serverFile", "", "file containing smb servers, one per line")
 	user := flag.String("user", "", "NTLM user")
 	pass := flag.String("pass", "", "NTLM pass")
+	domain := flag.String("domain", "", "NTLM domain")
 	dbname := flag.String("dbname", "sqlite.db", "sqlite filename")
 	disableTui := flag.Bool("disableTui", false, "disable TUI")
 
@@ -134,6 +136,7 @@ func main() {
 		ServerFile:        *serverFile,
 		User:              *user,
 		Pass:              *pass,
+		Domain:            *domain,
 		LdapServer:        *ldapServer,
 		LdapDn:            *ldapDn,
 		LdapFilter:        *ldapFilter,
@@ -337,6 +340,7 @@ func smbSession(server string, opts Options) (net.Conn, *smb2.Session, error) {
 		Initiator: &smb2.NTLMInitiator{
 			User:     opts.User,
 			Password: opts.Pass,
+			Domain:   opts.Domain,
 		},
 	}
 
